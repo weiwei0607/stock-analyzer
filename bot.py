@@ -127,7 +127,7 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🗑️ 提醒 #{alert_id} 已刪除")
 
 
-async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
+async def check_alerts(bot):
     """背景排程：檢查所有活躍提醒"""
     alerts = db.get_active_alerts()
     if not alerts:
@@ -151,7 +151,7 @@ async def check_alerts(context: ContextTypes.DEFAULT_TYPE):
         if triggered:
             db.deactivate_alert(alert_id)
             emoji = "🚀" if cond_type == "gt" else "🔻"
-            await context.bot.send_message(
+            await bot.send_message(
                 chat_id=config.TELEGRAM_CHAT_ID,
                 text=(
                     f"{emoji} <b>價格提醒觸發！</b>\n\n"
