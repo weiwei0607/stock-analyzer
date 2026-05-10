@@ -16,6 +16,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS alerts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL DEFAULT 0,
             symbol TEXT NOT NULL,
             condition_type TEXT NOT NULL CHECK(condition_type IN ('gt', 'lt')),
             target_price REAL NOT NULL,
@@ -24,6 +25,12 @@ def init_db():
             triggered_at TEXT
         )
     """)
+
+    # 遷移：舊版沒有 user_id 欄位
+    try:
+        cursor.execute("ALTER TABLE alerts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS price_cache (
@@ -38,12 +45,12 @@ def init_db():
     conn.close()
 
 
-def add_alert(symbol: str, condition_type: str, target_price: float) -> int:
+def add_alert(symbol: str, condition_type: str, target_price: float, user_id: int = 0) -> int:
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO alerts (symbol, condition_type, target_price) VALUES (?, ?, ?)",
-        (symbol.upper(), condition_type, target_price),
+        "INSERT INTO alerts (user_id, symbol, condition_type, target_price) VALUES (?, ?, ?, ?)",
+        (user_id, symbol.upper(), condition_type, target_price),
     )
     alert_id = cursor.lastrowid
     conn.commit()
@@ -52,21 +59,24 @@ def add_alert(symbol: str, condition_type: str, target_price: float) -> int:
 
 
 def get_active_alerts():
+    """回傳所有活躍提醒，已按 symbol 排序方便外部去重"""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, symbol, condition_type, target_price FROM alerts WHERE is_active = 1"
+        "SELECT id, user_id, symbol, condition_type, target_price FROM alerts WHERE is_active = 1 ORDER BY symbol"
     )
     rows = cursor.fetchall()
     conn.close()
     return rows
 
 
-def get_all_alerts():
+def get_user_alerts(user_id: int):
+    """取得指定使用者的所有提醒（含已觸發）"""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, symbol, condition_type, target_price, is_active FROM alerts ORDER BY id DESC"
+        "SELECT id, symbol, condition_type, target_price, is_active FROM alerts WHERE user_id = ? ORDER BY id DESC",
+        (user_id,),
     )
     rows = cursor.fetchall()
     conn.close()
@@ -84,12 +94,18 @@ def deactivate_alert(alert_id: int):
     conn.close()
 
 
-def delete_alert(alert_id: int):
+def delete_alert(alert_id: int, user_id: int) -> bool:
+    """刪除提醒，只能刪自己的。回傳是否成功。"""
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM alerts WHERE id = ?", (alert_id,))
+    cursor.execute(
+        "DELETE FROM alerts WHERE id = ? AND user_id = ?",
+        (alert_id, user_id),
+    )
+    deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
+    return deleted
 
 
 def cache_price(symbol: str, price: float, change_pct: float = None):
