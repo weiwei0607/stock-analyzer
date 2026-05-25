@@ -5,6 +5,8 @@ from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "stocks.db")
 
+MAX_ALERTS_PER_USER = 20
+
 
 def _connect():
     return closing(sqlite3.connect(DB_PATH))
@@ -15,6 +17,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS alerts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL DEFAULT 0,
                 symbol TEXT NOT NULL,
                 condition_type TEXT NOT NULL CHECK(condition_type IN ('gt', 'lt')),
                 target_price REAL NOT NULL,
@@ -34,11 +37,18 @@ def init_db():
         conn.commit()
 
 
-def add_alert(symbol: str, condition_type: str, target_price: float) -> int:
+def add_alert(symbol: str, condition_type: str, target_price: float, user_id: int = 0):
     with _connect() as conn:
         cursor = conn.execute(
-            "INSERT INTO alerts (symbol, condition_type, target_price) VALUES (?, ?, ?)",
-            (symbol.upper(), condition_type, target_price),
+            "SELECT COUNT(*) FROM alerts WHERE user_id = ? AND is_active = 1",
+            (user_id,),
+        )
+        count = cursor.fetchone()[0]
+        if count >= MAX_ALERTS_PER_USER:
+            return None
+        cursor = conn.execute(
+            "INSERT INTO alerts (user_id, symbol, condition_type, target_price) VALUES (?, ?, ?, ?)",
+            (user_id, symbol.upper(), condition_type, target_price),
         )
         conn.commit()
         return cursor.lastrowid
