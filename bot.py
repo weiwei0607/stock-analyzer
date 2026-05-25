@@ -1,4 +1,7 @@
+import re
 import logging
+from collections import defaultdict
+import time
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -18,6 +21,21 @@ logger = logging.getLogger(__name__)
 
 # 初始化資料庫
 db.init_db()
+
+_rate_limit: dict[int, float] = defaultdict(float)
+RATE_LIMIT_SEC = 5
+
+
+def is_rate_limited(user_id: int) -> bool:
+    now = time.monotonic()
+    if now - _rate_limit[user_id] < RATE_LIMIT_SEC:
+        return True
+    _rate_limit[user_id] = now
+    return False
+
+
+def is_valid_symbol(s: str) -> bool:
+    return bool(re.match(r'^[A-Z0-9.\-]{1,15}$', s))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -39,11 +57,19 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """查詢股價"""
+    if is_rate_limited(update.effective_user.id):
+        await update.message.reply_text("請稍等後再試")
+        return
+
     if not context.args:
         await update.message.reply_text("❌ 請輸入股票代號，例如：/price 2330.TW")
         return
 
     symbol = context.args[0].upper()
+    if not is_valid_symbol(symbol):
+        await update.message.reply_text("❌ 無效股票代號")
+        return
+
     data = get_price(symbol)
 
     if "error" in data:
@@ -65,6 +91,10 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """設定到價提醒"""
+    if is_rate_limited(update.effective_user.id):
+        await update.message.reply_text("請稍等後再試")
+        return
+
     if len(context.args) != 3:
         await update.message.reply_text(
             "❌ 格式錯誤。範例：\n"
@@ -74,6 +104,10 @@ async def alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     symbol = context.args[0].upper()
+    if not is_valid_symbol(symbol):
+        await update.message.reply_text("❌ 無效股票代號")
+        return
+
     condition = context.args[1]
     try:
         target = float(context.args[2])
@@ -86,7 +120,12 @@ async def alert_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     cond_type = "gt" if condition == ">" else "lt"
-    alert_id = db.add_alert(symbol, cond_type, target)
+    user_id = update.effective_user.id
+    alert_id = db.add_alert(symbol, cond_type, target, user_id)
+
+    if alert_id is None:
+        await update.message.reply_text("❌ 已達到提醒上限（最多 20 個），請先刪除部分提醒")
+        return
 
     await update.message.reply_text(
         f"✅ 提醒已設定 (#{alert_id})\n"
