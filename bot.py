@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -57,7 +58,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = []
     for data in results:
         if "error" in data:
-            lines.append(f"❌ {data['error']}")
+            lines.append(f"❌ {html.escape(data['error'])}")
             continue
         emoji = "📈" if data["change"] >= 0 else "📉"
         lines.append(

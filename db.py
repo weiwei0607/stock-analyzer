@@ -11,128 +11,141 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL DEFAULT 0,
-            symbol TEXT NOT NULL,
-            condition_type TEXT NOT NULL CHECK(condition_type IN ('gt', 'lt')),
-            target_price REAL NOT NULL,
-            is_active INTEGER DEFAULT 1,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            triggered_at TEXT
-        )
-    """)
-
-    # 遷移：舊版沒有 user_id 欄位
     try:
-        cursor.execute("ALTER TABLE alerts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+        cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS price_cache (
-            symbol TEXT PRIMARY KEY,
-            price REAL,
-            change_pct REAL,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL DEFAULT 0,
+                symbol TEXT NOT NULL,
+                condition_type TEXT NOT NULL CHECK(condition_type IN ('gt', 'lt')),
+                target_price REAL NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                triggered_at TEXT
+            )
+        """)
 
-    conn.commit()
-    conn.close()
+        # 遷移：舊版沒有 user_id 欄位
+        try:
+            cursor.execute("ALTER TABLE alerts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS price_cache (
+                symbol TEXT PRIMARY KEY,
+                price REAL,
+                change_pct REAL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def add_alert(symbol: str, condition_type: str, target_price: float, user_id: int = 0) -> int:
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO alerts (user_id, symbol, condition_type, target_price) VALUES (?, ?, ?, ?)",
-        (user_id, symbol.upper(), condition_type, target_price),
-    )
-    alert_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return alert_id
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO alerts (user_id, symbol, condition_type, target_price) VALUES (?, ?, ?, ?)",
+            (user_id, symbol.upper(), condition_type, target_price),
+        )
+        alert_id = cursor.lastrowid
+        conn.commit()
+        return alert_id
+    finally:
+        conn.close()
 
 
 def get_active_alerts():
     """回傳所有活躍提醒，已按 symbol 排序方便外部去重"""
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, user_id, symbol, condition_type, target_price FROM alerts WHERE is_active = 1 ORDER BY symbol"
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, user_id, symbol, condition_type, target_price FROM alerts WHERE is_active = 1 ORDER BY symbol"
+        )
+        return cursor.fetchall()
+    finally:
+        conn.close()
 
 
 def get_user_alerts(user_id: int):
     """取得指定使用者的所有提醒（含已觸發）"""
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, symbol, condition_type, target_price, is_active FROM alerts WHERE user_id = ? ORDER BY id DESC",
-        (user_id,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, symbol, condition_type, target_price, is_active FROM alerts WHERE user_id = ? ORDER BY id DESC",
+            (user_id,),
+        )
+        return cursor.fetchall()
+    finally:
+        conn.close()
 
 
 def deactivate_alert(alert_id: int):
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE alerts SET is_active = 0, triggered_at = ? WHERE id = ?",
-        (datetime.now().isoformat(), alert_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE alerts SET is_active = 0, triggered_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), alert_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def delete_alert(alert_id: int, user_id: int) -> bool:
     """刪除提醒，只能刪自己的。回傳是否成功。"""
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "DELETE FROM alerts WHERE id = ? AND user_id = ?",
-        (alert_id, user_id),
-    )
-    deleted = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return deleted
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM alerts WHERE id = ? AND user_id = ?",
+            (alert_id, user_id),
+        )
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()
 
 
-def cache_price(symbol: str, price: float, change_pct: float = None):
+def cache_price(symbol: str, price: float, change_pct: float | None = None):
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO price_cache (symbol, price, change_pct, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(symbol) DO UPDATE SET
-            price=excluded.price,
-            change_pct=excluded.change_pct,
-            updated_at=excluded.updated_at
-        """,
-        (symbol.upper(), price, change_pct, datetime.now().isoformat()),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO price_cache (symbol, price, change_pct, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                price=excluded.price,
+                change_pct=excluded.change_pct,
+                updated_at=excluded.updated_at
+            """,
+            (symbol.upper(), price, change_pct, datetime.now().isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_cached_price(symbol: str):
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT price, change_pct, updated_at FROM price_cache WHERE symbol = ?",
-        (symbol.upper(),),
-    )
-    row = cursor.fetchone()
-    conn.close()
-    return row
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT price, change_pct, updated_at FROM price_cache WHERE symbol = ?",
+            (symbol.upper(),),
+        )
+        return cursor.fetchone()
+    finally:
+        conn.close()

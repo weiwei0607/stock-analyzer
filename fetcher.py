@@ -36,7 +36,7 @@ def _fetch_price_sync(symbol: str) -> dict:
 
 async def get_price(symbol: str) -> dict:
     """非阻塞版本，在 executor 裡執行 yfinance（避免卡住 event loop）"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch_price_sync, symbol)
 
 
